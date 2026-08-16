@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>牛来 · THE BULL ARRIVES</title>
+<style>
+  :root{ --line:#2b3648; --txt:#f3e9d8; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;
+    font-family:"PingFang SC","Microsoft YaHei","Segoe UI",serif;color:var(--txt)}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+
+  /* 电影遮幅 + 暗角 */
+  #bars{position:fixed;inset:0;pointer-events:none;z-index:10}
+  #bars::before,#bars::after{content:"";position:absolute;left:0;right:0;height:9vh;background:#000}
+  #bars::before{top:0} #bars::after{bottom:0}
+  #vig{position:fixed;inset:0;pointer-events:none;z-index:11;
+    background:radial-gradient(ellipse at center, transparent 52%, rgba(0,0,0,.62) 100%)}
+
+  /* 字幕 / 片头片尾 */
+  #title{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;z-index:20;pointer-events:none;text-align:center;
+    transition:opacity .8s; opacity:0}
+  #title .cn{font-size:13vw;font-weight:800;letter-spacing:.12em;color:#f6ead2;
+    text-shadow:0 0 28px rgba(255,170,80,.45)}
+  #title .en{font-size:1.5vw;letter-spacing:.55em;color:#d8a25a;margin-top:.4em;text-transform:uppercase}
+  #end{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;z-index:20;pointer-events:none;text-align:center;
+    opacity:0;transition:opacity 1s}
+  #end .fin{font-size:4vw;letter-spacing:.4em;color:#f6ead2}
+  #end .cr{font-size:1vw;letter-spacing:.3em;color:#b98a4e;margin-top:1.2em;line-height:2}
+
+  /* 对话字幕 */
+  #sub{position:fixed;left:50%;bottom:17vh;transform:translateX(-50%);z-index:25;max-width:82vw;
+    text-align:center;font-size:1.7vw;line-height:1.5;opacity:0;transition:opacity .3s;
+    text-shadow:0 2px 8px rgba(0,0,0,.85);pointer-events:none;padding:0 4vw}
+  #sub .who{display:block;font-size:.62em;letter-spacing:.32em;margin-bottom:.35em;opacity:.9}
+  #sub.mom{color:#ffd9a0} #sub.mom .who{color:#ffb060}
+  #sub.bull{color:#f3e9d8} #sub.bull .who{color:#c9a877;font-style:italic}
+  #sub.bird{color:#bfe3ff} #sub.bird .who{color:#7fb8e0}
+  #sub.dad{color:#ffe08a;font-weight:600} #sub.dad .who{color:#ffc24d}
+  #sub.punch{font-size:2.2vw}
+
+  /* 撞树特效字 */
+  #boom{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:40;
+    font-size:10vw;font-weight:900;color:#ffd24d;text-shadow:0 0 34px #ff7a00,0 0 10px #fff;
+    opacity:0;pointer-events:none;transition:opacity .12s}
+
+  /* 控制条 */
+  #ctrl{position:fixed;bottom:10vh;left:50%;transform:translateX(-50%);z-index:30;
+    display:flex;align-items:center;gap:10px;background:rgba(10,8,6,.6);
+    border:1px solid var(--line);border-radius:30px;padding:7px 14px;backdrop-filter:blur(8px)}
+  #ctrl button{background:#3a2a16;color:#f3e9d8;border:1px solid #6b4a22;border-radius:20px;
+    padding:6px 14px;font-size:12.5px;cursor:pointer}
+  #ctrl button:hover{background:#5a3f1f}
+  #timeline{width:min(44vw,500px);height:4px;background:#2a2118;border-radius:3px;overflow:hidden}
+  #prog{height:100%;width:0;background:linear-gradient(90deg,#d8a25a,#ffce8a)}
+  #tlabel{font-family:ui-monospace,monospace;font-size:11px;color:#c9a877;min-width:84px;text-align:center}
+
+  #hint{position:fixed;top:11vh;left:50%;transform:translateX(-50%);z-index:30;
+    font-size:12px;color:#caa06a;letter-spacing:.1em;opacity:.8;pointer-events:none;text-align:center}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"./vendor/three.module.js",
+  "three/addons/":"./vendor/addons/"
+}}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="bars"></div>
+<div id="vig"></div>
+
+<div id="title"><div class="cn">牛 来</div><div class="en">The Bull Arrives</div></div>
+<div id="end">
+  <div class="fin">— 完 —</div>
+  <div class="cr">导演 · 程序化几何<br>主演 · 一头不想长大的牛<br>特别出演 · 妈 / 爸 / 小云雀 / 蛇 / 树<br>THREE.JS CINEMATIC · 单文件短片</div>
+</div>
+
+<div id="sub"></div>
+<div id="boom">哐!!</div>
+
+<div id="hint">播放中 · 点任意处开启音乐 · 暂停后可拖拽自由看 · 点「重播」从头开始</div>
+
+<div id="ctrl">
+  <button id="play">⏸ 暂停</button>
+  <div id="timeline"><div id="prog"></div></div>
+  <div id="tlabel">0.0 / 40s</div>
+  <button id="music">🔊 音乐</button>
+  <button id="restart">↺ 重播</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+try {
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const SKY = new THREE.Color(0x2a1b10);
+scene.background = SKY;
+scene.fog = new THREE.Fog(0x2a1b10, 18, 64);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, .05, 300);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = .06;
+controls.enabled = false; // 播放时由时间线接管
+
+// 环境 + 暖色夕阳光
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), .03).texture;
+scene.add(new THREE.HemisphereLight(0xffd9a0, 0x2a1a10, .55));
+const sun = new THREE.DirectionalLight(0xff9248, 3.0);
+sun.position.set(-14, 7, -10); sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=1; sun.shadow.camera.far=60;
+sun.shadow.camera.left=-24; sun.shadow.camera.right=24;
+sun.shadow.camera.top=24; sun.shadow.camera.bottom=-24;
+scene.add(sun);
+const rim = new THREE.DirectionalLight(0x88aaff, .6); rim.position.set(10,5,12); scene.add(rim);
+
+// 地面
+const ground = new THREE.Mesh(new THREE.CircleGeometry(90,64),
+  new THREE.MeshStandardMaterial({color:0x3a2a18, roughness:1, metalness:0}));
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+// 几块石头点缀
+const rockMat = new THREE.MeshStandardMaterial({color:0x5a4d3a, roughness:1});
+for(let i=0;i<9;i++){
+  const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.3+Math.random()*0.5,0), rockMat);
+  const a=Math.random()*Math.PI*2, d=7+Math.random()*22;
+  r.position.set(Math.cos(a)*d, 0.1, Math.sin(a)*d); r.castShadow=true; r.receiveShadow=true; scene.add(r);
+}
+
+// ---------- 河 ----------
+const river = new THREE.Mesh(new THREE.PlaneGeometry(5,70),
+  new THREE.MeshStandardMaterial({color:0x2a6f9e, roughness:.18, metalness:.35, transparent:true, opacity:.82}));
+river.rotation.x = -Math.PI/2; river.position.set(0,0.04,0); river.receiveShadow=true; scene.add(river);
+// 河岸草色带
+[-2.6,2.6].forEach(x=>{
+  const bank=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.12,70),
+    new THREE.MeshStandardMaterial({color:0x4a3a22,roughness:1}));
+  bank.position.set(x,0.06,0); bank.receiveShadow=true; scene.add(bank);
+});
+
+// ---------- 程序化牛（可复用） ----------
+function buildOx({coat=0x4a3320, coatD=0x352315, scale=1, horn=0xe9dcc0}={}){
+  const g=new THREE.Group();
+  const M=(c,opt={})=>new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:.7,metalness:.05},opt));
+  const c=M(coat), cd=M(coatD), hn=M(horn,{roughness:.5}), hoof=M(0x14100c,{roughness:.9}),
+        eye=M(0x0a0a0a,{roughness:.2}), sn=M(0x6b4a32,{roughness:.6});
+  const body=new THREE.Mesh(new THREE.SphereGeometry(1,32,24),c);
+  body.scale.set(1.5,1.0,1.05); body.position.y=1.55; body.castShadow=true; g.add(body);
+  const hump=new THREE.Mesh(new THREE.SphereGeometry(0.7,24,18),cd);
+  hump.scale.set(1.1,0.8,1.0); hump.position.set(-0.2,2.15,0); hump.castShadow=true; g.add(hump);
+  const head=new THREE.Group(); head.position.set(1.45,1.75,0); g.add(head);
+  const skull=new THREE.Mesh(new THREE.SphereGeometry(0.55,24,18),c); skull.scale.set(1.0,0.95,0.9); skull.castShadow=true; head.add(skull);
+  const muzzle=new THREE.Mesh(new THREE.CylinderGeometry(0.32,0.42,0.6,20),sn); muzzle.rotation.z=Math.PI/2; muzzle.position.set(0.5,0.05,0); muzzle.castShadow=true; head.add(muzzle);
+  [-0.12,0.12].forEach(z=>{const n=new THREE.Mesh(new THREE.SphereGeometry(0.06,10,8),M(0x2a1a12)); n.position.set(0.8,0.05,z); head.add(n);});
+  [-0.28,0.28].forEach(z=>{const e=new THREE.Mesh(new THREE.SphereGeometry(0.07,12,10),eye); e.position.set(0.35,0.18,z); head.add(e);});
+  [-0.5,0.5].forEach(z=>{const ear=new THREE.Mesh(new THREE.SphereGeometry(0.18,12,10),cd); ear.scale.set(0.6,1.1,0.4); ear.position.set(-0.1,0.45,z); ear.rotation.z=z>0?0.5:-0.5; head.add(ear);});
+  [-1,1].forEach(s=>{
+    const h=new THREE.Mesh(new THREE.ConeGeometry(0.11,0.75,16),hn); h.position.set(-0.15,0.5,s*0.32); h.rotation.z=s*0.5; h.rotation.x=-0.3; h.castShadow=true; head.add(h);
+    const tip=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.4,14),hn); tip.position.set(-0.35,0.85,s*0.5); tip.rotation.z=s*0.7; tip.rotation.x=-0.5; head.add(tip);
+  });
+  const legs=[]; const legPos=[[1.0,0.55],[1.0,-0.55],[-0.95,0.55],[-0.95,-0.55]];
+  legPos.forEach(([x,z])=>{
+    const lg=new THREE.Group(); lg.position.set(x,1.15,z); g.add(lg);
+    const up=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.14,0.7,14),cd); up.position.y=-0.35; up.castShadow=true; lg.add(up);
+    const lo=new THREE.Group(); lo.position.y=-0.7; lg.add(lo);
+    const low=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.11,0.6,14),cd); low.position.y=-0.3; low.castShadow=true; lo.add(low);
+    const hf=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.16,14),hoof); hf.position.y=-0.62; hf.castShadow=true; lo.add(hf);
+    legs.push({g:lg,lo});
+  });
+  const tail=new THREE.Group(); tail.position.set(-1.5,1.9,0); g.add(tail);
+  const tup=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.05,0.9,10),cd); tup.position.y=-0.45; tail.add(tup);
+  const ttuft=new THREE.Mesh(new THREE.SphereGeometry(0.13,12,10),M(0x231710)); ttuft.position.y=-0.95; tail.add(ttuft);
+  // 眼泪（默认隐藏）
+  const tears=new THREE.Group(); tears.visible=false; head.add(tears);
+  [-0.28,0.28].forEach(z=>{const d=new THREE.Mesh(new THREE.SphereGeometry(0.05,8,6),
+    new THREE.MeshStandardMaterial({color:0x9fd8ff,roughness:.2,transparent:true,opacity:.85}));
+    d.position.set(0.32,0.04,z); tears.add(d);});
+  g.scale.setScalar(scale);
+  return {g, head, legs, tail, tears};
+}
+
+const bull = buildOx({coat:0x4a3320, coatD:0x352315, scale:1.0});        // 牛来
+const mom  = buildOx({coat:0x6b4a2e, coatD:0x4a3320, scale:1.02});      // 妈（浅一点）
+const dad  = buildOx({coat:0x3a2818, coatD:0x261a10, scale:1.12});      // 爸（大一点、深一点）
+scene.add(bull.g, mom.g, dad.g);
+
+// ---------- 蛇 ----------
+const snake = new THREE.Group(); snake.visible=false; scene.add(snake);
+const snakePts=[];
+for(let i=0;i<=44;i++){const a=i/44; snakePts.push(new THREE.Vector3(-10.6+a*1.8, 0.16+Math.sin(a*Math.PI*3)*0.12, Math.sin(a*Math.PI*5)*0.55));}
+const snakeGeo=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(snakePts),64,0.12,8);
+const snakeBody=new THREE.Mesh(snakeGeo, new THREE.MeshStandardMaterial({color:0x4a7d3a,roughness:.6}));
+snakeBody.castShadow=true; snake.add(snakeBody);
+const snakeHead=new THREE.Mesh(new THREE.SphereGeometry(0.2,16,12), new THREE.MeshStandardMaterial({color:0x3f6b32,roughness:.6}));
+snakeHead.position.set(-10.6,0.2,0.2); snake.add(snakeHead);
+const tongue=new THREE.Mesh(new THREE.ConeGeometry(0.04,0.3,8), new THREE.MeshStandardMaterial({color:0xd23b3b}));
+tongue.rotation.x=Math.PI/2; tongue.position.set(-10.85,0.2,0.2); snake.add(tongue);
+
+// ---------- 小云雀 ----------
+const bird = new THREE.Group(); bird.visible=false; scene.add(bird);
+const bbody=new THREE.Mesh(new THREE.SphereGeometry(0.22,16,12), new THREE.MeshStandardMaterial({color:0x9a7a44,roughness:.7}));
+bbody.scale.set(1,0.9,1.3); bird.add(bbody);
+const bhead=new THREE.Mesh(new THREE.SphereGeometry(0.15,14,10), new THREE.MeshStandardMaterial({color:0xb09050,roughness:.7}));
+bhead.position.set(0.22,0.12,0); bird.add(bhead);
+const beak=new THREE.Mesh(new THREE.ConeGeometry(0.05,0.22,8), new THREE.MeshStandardMaterial({color:0xe0a030}));
+beak.rotation.z=-Math.PI/2; beak.position.set(0.42,0.1,0); bird.add(beak);
+const wingMat=new THREE.MeshStandardMaterial({color:0xc0a060,side:THREE.DoubleSide});
+const wl=new THREE.Mesh(new THREE.PlaneGeometry(0.5,0.26),wingMat); wl.position.set(-0.05,0.05,0.2); bird.add(wl);
+const wr=new THREE.Mesh(new THREE.PlaneGeometry(0.5,0.26),wingMat); wr.position.set(-0.05,0.05,-0.2); bird.add(wr);
+const beye=new THREE.Mesh(new THREE.SphereGeometry(0.03,8,6), new THREE.MeshStandardMaterial({color:0x111}));
+beye.position.set(0.3,0.16,0.07); bird.add(beye);
+
+// ---------- 大树 ----------
+const tree = new THREE.Group(); tree.position.set(9.3,0,0); scene.add(tree);
+const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.8,5.2,18),
+  new THREE.MeshStandardMaterial({color:0x5a3d22,roughness:1})); trunk.position.y=2.6; trunk.castShadow=true; tree.add(trunk);
+const foliMat=new THREE.MeshStandardMaterial({color:0x2f5a2a,roughness:.9});
+[[0,5.4,0,2.2],[-1.1,4.7,0.6,1.5],[1.1,4.7,-0.6,1.5],[0,4.5,1.3,1.4],[0,4.5,-1.3,1.4],[0.6,5.6,0.6,1.2]].forEach(([x,y,z,r])=>{
+  const f=new THREE.Mesh(new THREE.SphereGeometry(r,16,12),foliMat); f.position.set(x,y,z); f.castShadow=true; tree.add(f);
+});
+
+// ---------- 时间线 ----------
+const TOTAL=40;
+const CAM=[
+  {t:0,  p:[2,4,20],   l:[-2,1.5,-4]},
+  {t:3,  p:[-9,3,12],  l:[-8,1.5,0]},
+  {t:6,  p:[-2,4.5,11],l:[0,1.5,0]},
+  {t:9,  p:[5,3.5,12], l:[7,1.5,0]},
+  {t:12, p:[-10,2.6,7],l:[-8,1.6,1.5]},
+  {t:20, p:[-13,3.6,9],l:[-9.5,1.4,0]},
+  {t:23, p:[0,5.5,15], l:[0,1.5,0]},
+  {t:25.5,p:[7,3,11],  l:[9,1.8,0]},
+  {t:28, p:[11.5,2.8,7],l:[9.5,1.8,0.6]},
+  {t:34, p:[2,4.5,20], l:[0,1.5,0]},
+  {t:39, p:[2,4.5,20], l:[0,1.5,0]},
+];
+
+// 对话脚本
+const WHO={ mom:'妈 妈', bull:'牛 来', bird:'小云雀', dad:'牛 爸' };
+const SCRIPT=[
+  {who:'mom',  t0:9.5, t1:12.5, text:'牛来，你跳过来就是成长了！'},
+  {who:'mom',  t0:12.8,t1:16.5, text:'你现在就得成长，不能总指望着以后长大。'},
+  {who:'bull', t0:16.8,t1:20.5, text:'我现在不想跳……我现在，不想长大。'},
+  {who:'bird', t0:22.5,t1:25.2, text:'牛来！快看——你后面有蛇！'},
+  {who:'bull', t0:25.0,t1:26.8, text:'（吓得一蹦）嗷——！'},
+  {who:'dad',  t0:27.6,t1:30.5, text:'牛来，你怎么撞到树上了？'},
+  {who:'bull', t0:30.6,t1:32.2, text:'（牛来一直在哭）呜……呜……'},
+  {who:'dad',  t0:32.4,t1:37.0, text:'你撞到树了，树不应该哭吗？', punch:true},
+];
+
+const lerp=(a,b,t)=>a+(b-a)*t;
+const ease=t=>t*t*(3-2*t);
+function lerp3(a,b,k){return [lerp(a[0],b[0],k),lerp(a[1],b[1],k),lerp(a[2],b[2],k)];}
+function sample(arr,t){
+  if(t<=arr[0].t) return arr[0];
+  for(let i=0;i<arr.length-1;i++){
+    if(t>=arr[i].t && t<=arr[i+1].t){
+      const k=ease((t-arr[i].t)/(arr[i+1].t-arr[i].t));
+      return { p:arr[i].p.map((v,j)=>lerp(v,arr[i+1].p[j],k)),
+               l:arr[i].l.map((v,j)=>lerp(v,arr[i+1].l[j],k)) };
+    }
+  }
+  return arr[arr.length-1];
+}
+// 跃迁弧线：x0→x1，弧高 h
+function leap(x0,x1,t0,t1,t,h=2.2){
+  if(t<=t0) return {x:x0,y:0};
+  if(t>=t1) return {x:x1,y:0};
+  const k=ease((t-t0)/(t1-t0));
+  return {x:lerp(x0,x1,k), y:Math.sin(Math.PI*k)*h};
+}
+
+// ---------- 状态 ----------
+const ui={ playing:true, t:0 };
+const titleEl=document.getElementById('title'), endEl=document.getElementById('end'),
+      progEl=document.getElementById('prog'), tlab=document.getElementById('tlabel'),
+      playBtn=document.getElementById('play'), subEl=document.getElementById('sub'),
+      boomEl=document.getElementById('boom');
+let boomed=false;
+
+function setPlay(on){ ui.playing=on; controls.enabled=!on; playBtn.textContent= on?'⏸ 暂停':'▶ 播放';
+  document.getElementById('hint').style.opacity = on?0.8:0.4;
+  if(on){ startAudio(); if(actx) actx.resume(); }
+}
+playBtn.onclick=()=> setPlay(!ui.playing);
+document.getElementById('restart').onclick=()=>{ ui.t=0; boomed=false; setPlay(true); };
+// 首次任意交互开启音乐（绕过自动播放限制）
+addEventListener('pointerdown', ()=>{ startAudio(); if(actx) actx.resume(); }, {once:true});
+
+// ---------- 程序化音乐（Web Audio，离线） ----------
+let actx=null, musicOn=true, musicGain=null, arpTimer=null;
+const PENTA=[523.25,587.33,659.25,783.99,880.0]; // C5 D5 E5 G5 A5
+let arpIdx=0, nextNote=0;
+function startAudio(){
+  if(actx) return;
+  try{
+    actx=new (window.AudioContext||window.webkitAudioContext)();
+  }catch(e){ return; }
+  musicGain=actx.createGain(); musicGain.gain.value=0; musicGain.connect(actx.destination);
+  const padFilter=actx.createBiquadFilter(); padFilter.type='lowpass'; padFilter.frequency.value=620; padFilter.connect(musicGain);
+  [110,164.81].forEach((f,i)=>{
+    const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+    const g=actx.createGain(); g.gain.value=0.5; o.connect(g); g.connect(padFilter); o.start();
+    const lfo=actx.createOscillator(); lfo.frequency.value=0.07+i*0.03;
+    const lg=actx.createGain(); lg.gain.value=0.25; lfo.connect(lg); lg.connect(g.gain); lfo.start();
+  });
+  musicGain.gain.linearRampToValueAtTime(musicOn?0.5:0.0, actx.currentTime+1.5);
+  scheduleArp();
+}
+function scheduleArp(){
+  if(!actx) return;
+  const now=actx.currentTime;
+  if(nextNote<now) nextNote=now+0.1;
+  while(nextNote < now+0.3){
+    playNote(PENTA[arpIdx%PENTA.length], nextNote, 0.5);
+    arpIdx += (Math.random()<0.5?1:2);
+    nextNote += 0.5;
+  }
+  arpTimer=setTimeout(scheduleArp, 120);
+}
+function playNote(freq,when,dur){
+  const o=actx.createOscillator(); o.type='sine'; o.frequency.value=freq;
+  const g=actx.createGain(); g.gain.setValueAtTime(0,when);
+  g.gain.linearRampToValueAtTime(0.075,when+0.02); g.gain.exponentialRampToValueAtTime(0.0001,when+dur);
+  o.connect(g); g.connect(musicGain); o.start(when); o.stop(when+dur+0.05);
+}
+function thud(){
+  if(!actx) return;
+  const now=actx.currentTime;
+  const o=actx.createOscillator(); o.type='sine';
+  o.frequency.setValueAtTime(220,now); o.frequency.exponentialRampToValueAtTime(40,now+0.25);
+  const g=actx.createGain(); g.gain.setValueAtTime(0.5,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.4);
+  o.connect(g); g.connect(actx.destination); o.start(now); o.stop(now+0.45);
+  const buf=actx.createBuffer(1, Math.floor(actx.sampleRate*0.15), actx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2);
+  const n=actx.createBufferSource(); n.buffer=buf;
+  const ng=actx.createGain(); ng.gain.value=0.25; n.connect(ng); ng.connect(actx.destination); n.start(now);
+}
+document.getElementById('music').onclick=()=>{
+  musicOn=!musicOn;
+  document.getElementById('music').textContent = musicOn?'🔊 音乐':'🔇 静音';
+  if(musicGain&&actx) musicGain.gain.linearRampToValueAtTime(musicOn?0.5:0.0, actx.currentTime+0.4);
+};
+
+// ---------- 主循环 ----------
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05);
+  if(ui.playing){
+    ui.t+=dt;
+    if(ui.t>=TOTAL){ ui.t=TOTAL; setPlay(false); }
+  }
+  const t=ui.t;
+
+  // 妈：先跳河
+  let m;
+  if(t<6) m={x:-8,y:0};
+  else if(t<9) m=leap(-8,8,6,9,t,2.4);
+  else m={x:8,y:0};
+  mom.g.position.set(m.x,m.y,-1.5); mom.g.rotation.y=Math.PI; // 面朝牛来
+  // 妈腿：跳跃时收腿，其余 idle
+  mom.legs.forEach((L,i)=>{ L.g.rotation.z = (t>=6&&t<9)? -0.5 : Math.sin(t*1.5+i)*0.04; });
+
+  // 牛来：不敢跳，被蛇吓到后跳过去撞树
+  let b;
+  if(t<23) b={x:-8,y:0};
+  else if(t<25.5) b=leap(-8,9,23,25.5,t,2.6);
+  else b={x:9,y:0};
+  bull.g.position.set(b.x,b.y,1.5); bull.g.rotation.y=0;
+  let headX=0;
+  if(t>=16.5 && t<20.2) headX=0.35;      // 低头拒绝
+  if(t>=25.2 && t<30) headX=-0.25;       // 撞晕
+  bull.head.rotation.x = headX;
+  bull.tears.visible = (t>=16.5&&t<20.2)||(t>=30&&t<31.9);
+  const bullJump = (t>23 && t<25.5);
+  bull.legs.forEach((L,i)=>{
+    if(bullJump){ L.g.rotation.z=-0.6; L.lo.rotation.z=0.9; }            // 收腿起跳
+    else if(t>16.5 && t<20.5) L.g.rotation.z=Math.sin(t*6+i)*0.12;      // 紧张抖腿
+    else L.g.rotation.z=Math.sin(t*1.5+i)*0.04;
+  });
+
+  // 爸：撞树后才出现
+  dad.g.visible = t>=27;
+  if(t>=27){ dad.g.position.set(10.6,0,0.7); dad.g.rotation.y=Math.PI; }
+  dad.legs.forEach((L,i)=>{ L.g.rotation.z=Math.sin(t*1.5+i)*0.04; });
+
+  // 蛇：报信时出现并扭动
+  snake.visible = t>=20.5;
+  if(snake.visible) snake.rotation.y = Math.sin(t*4)*0.15;
+
+  // 云雀：飞入→悬停报信→飞走
+  bird.visible = t>=20 && t<27.5;
+  if(bird.visible){
+    let bp;
+    if(t<22.5) bp=lerp3([-14,6,-4],[-7,2.6,2], ease((t-20)/2.5));
+    else if(t<25) bp=[-7+Math.sin(t*3)*0.1, 2.6+Math.sin(t*4)*0.1, 2];
+    else bp=lerp3([-7,2.6,2],[-14,8,-6], ease((t-25)/2.5));
+    bird.position.set(bp[0],bp[1],bp[2]);
+    bird.rotation.y = (t<25)? -0.4 : 0.5;
+    const flap=Math.sin(t*20)*0.7; wl.rotation.x=flap; wr.rotation.x=-flap;
+  }
+
+  // 尾巴摆动
+  const sw=Math.sin(t*2)*0.2;
+  bull.tail.rotation.z=sw+0.1; mom.tail.rotation.z=sw+0.1; if(dad.g.visible) dad.tail.rotation.z=sw+0.1;
+
+  // 撞树：一次性音效 + 抖动 + 「哐!!」
+  if(t>25.0 && t<26.3 && !boomed){ boomed=true; thud(); }
+  if(t>=25.05 && t<26.0) boomEl.style.opacity=1; else boomEl.style.opacity=0;
+
+  // 运镜（含撞树抖动）
+  let cam=sample(CAM,t);
+  let px=cam.p[0],py=cam.p[1],pz=cam.p[2];
+  if(t>25.0 && t<26.4){ const s=(26.4-t)*0.5; px+=(Math.random()-0.5)*s; py+=(Math.random()-0.5)*s; }
+  if(ui.playing){
+    camera.position.set(px,py,pz); camera.lookAt(...cam.l);
+  } else { controls.update(); }
+
+  // 字幕
+  let active=null;
+  for(const s of SCRIPT){ if(t>=s.t0 && t<=s.t1){ active=s; break; } }
+  if(active){
+    subEl.className='sub '+active.who+(active.punch?' punch':'');
+    subEl.innerHTML='<span class="who">'+WHO[active.who]+'</span>'+active.text;
+    subEl.style.opacity=1;
+  } else subEl.style.opacity=0;
+
+  // 片头 / 片尾
+  const ti = (t>0.6 && t<3.4)? Math.min(1,(t-0.6)/0.6,(3.4-t)/0.6) : (t>=3.4?0:1);
+  titleEl.style.opacity = ti>0.05?ti:0;
+  endEl.style.opacity = t>37? Math.min(1,(t-37)/1.4):0;
+
+  progEl.style.width=(t/TOTAL*100)+'%';
+  tlab.textContent = t.toFixed(1)+' / '+TOTAL+'s';
+
+  renderer.render(scene,camera);
+}
+animate();
+
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+} catch(err){
+  console.error(err);
+  document.body.insertAdjacentHTML('beforeend','<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#ff5d5d;z-index:99;text-align:center;padding:30px">初始化失败：'+(err&&err.message?err.message:err)+'<br>请用本地 HTTP 服务器打开（见 README）。</div>');
+}
+</script>
+</body>
+</html>

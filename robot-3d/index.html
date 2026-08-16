@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>六轴工业机器人 · 高精度 3D 交互仿真</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:rgba(18,24,33,.88); --line:#2b3648; --txt:#dce3ec;
+    --dim:#8b98a9; --acc:#ff9d3f; --ok:#3fd68f; --warn:#ffb020; --hot:#ff5d5d;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
+    font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;color:var(--txt)}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+
+  .panel{position:absolute;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;backdrop-filter:blur(10px);box-shadow:0 6px 24px rgba(0,0,0,.45)}
+
+  /* 左上：状态 */
+  #status{top:14px;left:14px;width:268px;padding:12px 14px;font-size:12.5px}
+  #status h1{font-size:15px;letter-spacing:.5px;margin-bottom:2px}
+  #status .sub{color:var(--dim);font-size:11px;margin-bottom:8px}
+  .row{display:flex;justify-content:space-between;align-items:center;margin:5px 0}
+  .row .k{color:var(--dim)}
+  .row .v{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .mode-chip{display:inline-block;padding:2px 9px;border-radius:20px;font-weight:600;
+    background:#1d2634;border:1px solid var(--line)}
+  .mode-chip.auto{color:#ffcf8a;border-color:#a2722f;background:#33271a}
+  .mode-chip.manual{color:#9fe0ff;border-color:#2f7ba2;background:#16262f}
+
+  /* 左下：关节控制 */
+  #joints{bottom:90px;left:14px;width:268px;padding:11px 14px;font-size:12px}
+  #joints b{font-size:12px;display:block;margin-bottom:6px;color:var(--acc)}
+  .jrow{margin:6px 0}
+  .jrow .lab{display:flex;justify-content:space-between;color:var(--dim);font-size:11px;margin-bottom:1px}
+  .jrow .lab .val{font-family:ui-monospace,monospace;color:var(--txt)}
+  input[type=range]{width:100%;accent-color:var(--acc);height:16px}
+
+  /* 图例 */
+  #legend{bottom:14px;left:14px;padding:10px 12px;font-size:11.5px;max-width:300px}
+  #legend b{font-size:12px;display:block;margin-bottom:6px}
+  .lg{display:flex;flex-wrap:wrap;gap:4px 12px}
+  .lg span{display:flex;align-items:center;gap:5px;color:var(--dim)}
+  .lg i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+  /* 底部控制条 */
+  #ctrl{bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:8px;
+    padding:8px 10px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:92vw}
+  button{background:#1c2736;color:var(--txt);border:1px solid var(--line);border-radius:7px;
+    padding:7px 13px;font-size:12.5px;cursor:pointer;transition:.15s;white-space:nowrap}
+  button:hover{background:#28394f;border-color:var(--acc)}
+  button.primary{background:#5a3a14;border-color:#a2722f}
+  button.primary.on{background:#17603f;border-color:#2a9e64}
+  button.view.on{background:#28394f;border-color:var(--acc);color:#fff}
+  #fps{font-family:ui-monospace,monospace;color:var(--dim);font-size:11px;margin-left:4px}
+
+  /* 零件信息卡 */
+  #card{position:absolute;pointer-events:none;width:300px;padding:12px 14px;font-size:12px;
+    display:none;z-index:50;border-left:3px solid var(--acc)}
+  #card .nm{font-size:14.5px;font-weight:700}
+  #card .en{color:var(--acc);font-size:11px;font-style:italic;margin-bottom:7px}
+  #card .sec{margin:6px 0}
+  #card .lab{color:var(--dim);font-size:10.5px;letter-spacing:1px;margin-bottom:2px}
+  #card .mat{color:#ffd479}
+  #card .st{margin-top:7px;padding:5px 8px;background:#12202b;border-radius:6px;
+    color:var(--ok);font-family:ui-monospace,monospace;font-size:11.5px}
+
+  /* 引导浮层 */
+  #guide{position:absolute;inset:0;background:rgba(6,10,15,.72);display:flex;
+    align-items:center;justify-content:center;z-index:99;backdrop-filter:blur(3px)}
+  #guide .box{width:min(560px,90vw);background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:24px 28px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  #guide h2{font-size:19px;margin-bottom:4px}
+  #guide .g-sub{color:var(--dim);font-size:12px;margin-bottom:14px}
+  #guide ul{list-style:none;font-size:12.5px;line-height:1.9}
+  #guide ul li::before{content:'▸ ';color:var(--acc)}
+  #guide .g-ok{margin-top:16px;display:flex;justify-content:flex-end}
+  #guide .g-ok button{background:var(--acc);color:#1a1206;border-color:var(--acc);font-weight:700}
+  #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    color:var(--hot);font-size:14px;z-index:100;text-align:center;padding:30px}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"./vendor/three.module.js",
+  "three/addons/":"./vendor/addons/"
+}}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="status" class="panel">
+  <h1>六轴工业机器人</h1>
+  <div class="sub">6-Axis Articulated Robot · 负载 12 kg</div>
+  <div class="row"><span class="k">运行模式</span><span class="mode-chip manual" id="mode">手动示教</span></div>
+  <div class="row"><span class="k">循环次数</span><span class="v" id="cyc">0</span></div>
+  <div class="row"><span class="k">TCP 速度</span><span class="v" id="tcpv">0.00 m/s</span></div>
+  <div class="row"><span class="k">TCP-X</span><span class="v" id="tx">0.00</span></div>
+  <div class="row"><span class="k">TCP-Y</span><span class="v" id="ty">0.00</span></div>
+  <div class="row"><span class="k">TCP-Z</span><span class="v" id="tz">0.00</span></div>
+</div>
+
+<div id="joints" class="panel">
+  <b>关节角控制（°）</b>
+  <div id="jlist"></div>
+</div>
+
+<div id="legend" class="panel">
+  <b>系统图例</b>
+  <div class="lg">
+    <span><i style="background:#2b3340"></i>结构本体</span>
+    <span><i style="background:#e0892f"></i>连杆臂</span>
+    <span><i style="background:#4452ff"></i>伺服关节</span>
+    <span><i style="background:#b8c0cc"></i>末端夹持</span>
+    <span><i style="background:#3fd68f"></i>视觉传感</span>
+  </div>
+</div>
+
+<div id="ctrl" class="panel">
+  <button id="play" class="primary">▶ 自动运行</button>
+  <button id="home">↺ 回到零位</button>
+  <button class="view" data-v="free">自由视角</button>
+  <button class="view" data-v="side">侧视</button>
+  <button class="view" data-v="top">俯视</button>
+  <button class="view" data-v="front">正视</button>
+  <span id="fps">-- fps</span>
+</div>
+
+<div id="card" class="panel">
+  <div class="nm"></div><div class="en"></div>
+  <div class="sec"><div class="lab">材料 / 工艺</div><div class="mat"></div></div>
+  <div class="sec"><div class="lab">功能</div><div class="fn"></div></div>
+  <div class="sec"><div class="lab">关键参数</div><div class="prm"></div></div>
+  <div class="st"></div>
+</div>
+
+<div id="guide">
+  <div class="box">
+    <h2>🦾 六轴工业机器人 3D 交互仿真</h2>
+    <div class="g-sub">程序化生成 · 正向运动学 · 实时 TCP 解算</div>
+    <ul>
+      <li>左键拖拽旋转视角　滚轮缩放　右键拖拽平移</li>
+      <li>鼠标悬浮任意零件 → 弹出信息卡（名称/材料/功能/实时关节角）</li>
+      <li>拖动左下 6 个关节滑块示教；点 <b>自动运行</b> 看抓取-放置循环</li>
+      <li>停机时拖动滑块即手动盘动各轴；运行中滑块跟随实时角度</li>
+      <li>底部预设：侧视 / 俯视 / 正视 一键切换</li>
+    </ul>
+    <div class="g-ok"><button id="gok">开始探索</button></div>
+  </div>
+</div>
+<div id="err"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+try {
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+scene.fog = new THREE.Fog(0x0d1117, 32, 75);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, .05, 200);
+camera.position.set(6, 5, 7);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = .08;
+controls.target.set(0, 1.7, 0);
+controls.minDistance = 2.2; controls.maxDistance = 30;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), .04).texture;
+
+scene.add(new THREE.HemisphereLight(0x9fb4d8, 0x141210, .5));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(8, 13, 6); sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=1; sun.shadow.camera.far=42;
+sun.shadow.camera.left=-14; sun.shadow.camera.right=14;
+sun.shadow.camera.top=14; sun.shadow.camera.bottom=-14;
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x88aaff, .5); fill.position.set(-6,4,-8); scene.add(fill);
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(30,64),
+  new THREE.MeshStandardMaterial({color:0x151a22, roughness:.95, metalness:0}));
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+scene.add(new THREE.GridHelper(60,60,0x2a3342,0x1a212c));
+
+// ---- 材质 ----
+function M(opt){ return new THREE.MeshStandardMaterial(opt); }
+const MAT = {
+  base:     M({color:0x2b3340, roughness:.6, metalness:.7}),
+  housing:  M({color:0x3a4350, roughness:.5, metalness:.8}),
+  link:     M({color:0xe0892f, roughness:.45, metalness:.55}),
+  link2:    M({color:0xf2a64b, roughness:.4,  metalness:.5}),
+  joint:    M({color:0x161b22, roughness:.4,  metalness:.9}),
+  motor:    M({color:0x4452ff, roughness:.5,  metalness:.6, emissive:0x101a55, emissiveIntensity:.5}),
+  grip:     M({color:0xb8c0cc, roughness:.3,  metalness:.9}),
+  cable:    M({color:0x111418, roughness:.8,  metalness:.1}),
+  sensor:   M({color:0x3fd68f, roughness:.35, metalness:.3, emissive:0x0a4d2e, emissiveIntensity:.6}),
+};
+
+// ---- 机器人层级（正向运动学链）----
+const robot = new THREE.Group(); scene.add(robot);
+const allMeshes = [];
+function reg(group, info){
+  group.traverse(o=>{ if(o.isMesh){ o.userData.info=info; o.castShadow=true; o.receiveShadow=true; allMeshes.push(o);} });
+  return group;
+}
+const cyl = (r1,r2,h,mat,seg=32)=> new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,seg), mat);
+const box = (w,h,d,mat)=> new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+const disc = (r,h,mat,seg=28)=>{ const m=cyl(r,r,h,mat,seg); m.rotation.x=Math.PI/2; return m; };
+
+// 底座
+const base = new THREE.Group();
+const baseMesh = cyl(0.7,0.86,0.42, MAT.base); baseMesh.position.y=0.21; base.add(baseMesh);
+const baseRing = cyl(0.72,0.72,0.1, MAT.joint); baseRing.position.y=0.45; base.add(baseRing);
+robot.add(base); reg(base, {nm:'底座与控制柜', en:'Base & Controller Cabinet', mat:'铸铁 HT250 · 阳极氧化', fn:'固定本体，内置伺服驱动、控制器与配重，提供电气/气路接口。', prm:'Ø170mm · 负载 12kg · 重复定位 ±0.02mm', type:'结构本体'});
+
+// J1 基座偏航
+const j1 = new THREE.Group(); j1.position.y=0.5; robot.add(j1);
+const col = cyl(0.34,0.34,0.78, MAT.housing); col.position.y=0.39; j1.add(col);
+const j1m = disc(0.36,0.2, MAT.motor); j1m.position.y=0.5; j1.add(j1m);
+reg(j1, {nm:'1 轴 · 基座回转', en:'J1 Base Yaw', mat:'谐波减速机 + 伺服电机', fn:'整机绕垂直轴回转，决定工作范围方位角。', prm:'±170° · 转速 175°/s', type:'伺服关节'});
+
+// J2 肩俯仰
+const j2 = new THREE.Group(); j2.position.set(0,0.7,0); j1.add(j2);
+const sh = box(0.5,0.5,0.62, MAT.housing); j2.add(sh);
+const j2m = disc(0.3,0.46, MAT.motor); j2.add(j2m);
+const upper = box(1.5,0.32,0.4, MAT.link); upper.position.set(0.78,0,0); j2.add(upper);
+reg(j2, {nm:'2 轴 · 大臂俯仰', en:'J2 Shoulder Pitch', mat:'铝合金臂体 +  RV 减速机', fn:'驱动大臂上下摆动，主承载轴。', prm:'±120° · 转速 175°/s', type:'连杆臂'});
+
+// J3 肘俯仰
+const j3 = new THREE.Group(); j3.position.set(1.56,0,0); j2.add(j3);
+const el = box(0.42,0.42,0.5, MAT.housing); j3.add(el);
+const j3m = disc(0.26,0.42, MAT.motor); j3.add(j3m);
+const fore = box(1.2,0.26,0.32, MAT.link2); fore.position.set(0.62,0,0); j3.add(fore);
+reg(j3, {nm:'3 轴 · 小臂俯仰', en:'J3 Elbow Pitch', mat:'铝合金臂体 +  RV 减速机', fn:'肘部弯曲，与大臂联动决定可达空间。', prm:'±150° · 转速 175°/s', type:'连杆臂'});
+
+// J4 前臂翻转
+const j4 = new THREE.Group(); j4.position.set(1.22,0,0); j3.add(j4);
+const j4m = cyl(0.22,0.22,0.3, MAT.motor); j4.add(j4m);
+reg(j4, {nm:'4 轴 · 前臂翻转', en:'J4 Forearm Roll', mat:'伺服 + 同步带', fn:'绕小臂轴线旋转，改变手腕姿态。', prm:'±180° · 转速 320°/s', type:'伺服关节'});
+
+// J5 腕俯仰
+const j5 = new THREE.Group(); j5.position.set(0.2,0,0); j4.add(j5);
+const w5 = box(0.34,0.34,0.36, MAT.housing); j5.add(w5);
+const j5m = disc(0.2,0.34, MAT.motor); j5.add(j5m);
+reg(j5, {nm:'5 轴 · 腕部俯仰', en:'J5 Wrist Pitch', mat:'谐波减速机', fn:'手腕上下摆动，调整工具接近角。', prm:'±120° · 转速 320°/s', type:'伺服关节'});
+
+// J6 腕翻转（工具法兰）
+const j6 = new THREE.Group(); j6.position.set(0.22,0,0); j5.add(j6);
+const fl = cyl(0.16,0.16,0.12, MAT.grip); j6.add(fl);
+const j6m = cyl(0.13,0.13,0.18, MAT.motor); j6m.rotation.z=Math.PI/2; j6m.position.x=0.04; j6.add(j6m);
+// 视觉传感器
+const cam = box(0.14,0.1,0.18, MAT.sensor); cam.position.set(0.06,0.16,0);
+const camL = cyl(0.03,0.03,0.04, MAT.joint); camL.rotation.x=Math.PI/2; camL.position.set(0.06,0.16,0.1); j6.add(cam); j6.add(camL);
+reg(j6, {nm:'6 轴 · 腕翻转 + 工具法兰', en:'J6 Tool Flange', mat:'不锈钢法兰 + 快换接口', fn:'末端绕工具轴旋转，安装夹爪/焊枪/吸盘。', prm:'±360° · 转速 420°/s', type:'末端夹持'});
+
+// 末端夹爪
+const grip = new THREE.Group(); grip.position.set(0.14,0,0); j6.add(grip);
+const palm = box(0.1,0.24,0.2, MAT.grip); grip.add(palm);
+const fL = box(0.18,0.07,0.05, MAT.grip); fL.position.set(0.12,0.09,0);
+const fR = box(0.18,0.07,0.05, MAT.grip); fR.position.set(0.12,-0.09,0);
+grip.add(fL); grip.add(fR);
+reg(grip, {nm:'两指平行夹爪', en:'Parallel Gripper', mat:'硬质阳极铝 + 丁腈胶垫', fn:'开合抓取工件，行程 0–80mm，夹持力 80N。', prm:'行程 80mm · 夹持力 80N · 自重 0.9kg', type:'末端夹持'});
+
+// TCP 标记
+const tcp = new THREE.Object3D(); tcp.position.set(0.3,0,0); j6.add(tcp);
+
+// 工件（被抓取的小方块）
+const part = box(0.22,0.22,0.22, M({color:0x9fe0ff, roughness:.3, metalness:.4}));
+part.position.set(2.4,0.11,1.6); part.castShadow=true; scene.add(part);
+const part2 = box(0.22,0.22,0.22, M({color:0xffd479, roughness:.3, metalness:.4}));
+part2.position.set(-2.4,0.11,-1.6); part2.castShadow=true; scene.add(part2);
+
+const JOINTS = [j1,j2,j3,j4,j5,j6];
+const AXIS = ['y','z','z','x','z','x'];
+const ZERO = [0,-30,60,0,30,0];
+const state = { J: ZERO.slice(), mode:'manual', auto:false, cycle:0, speed:1, seg:0, t:0, held:null };
+
+function applyJoints(){
+  for(let i=0;i<6;i++) JOINTS[i].rotation[AXIS[i]] = THREE.MathUtils.degToRad(state.J[i]);
+}
+
+// ---- 关节滑块 UI ----
+const JLAB = ['J1 基座','J2 大臂','J3 小臂','J4 翻转','J5 腕俯','J6 腕转'];
+const JRANGE = [[-170,170],[-120,120],[-150,150],[-180,180],[-120,120],[-360,360]];
+const jlist = document.getElementById('jlist');
+const sliders = [], vals = [];
+JLAB.forEach((lab,i)=>{
+  const row = document.createElement('div'); row.className='jrow';
+  row.innerHTML = `<div class="lab"><span>${lab}</span><span class="val">0°</span></div>
+    <input type="range" min="${JRANGE[i][0]}" max="${JRANGE[i][1]}" step="1" value="0">`;
+  jlist.appendChild(row);
+  const s = row.querySelector('input'); const v = row.querySelector('.val');
+  sliders.push(s); vals.push(v);
+  s.addEventListener('input', ()=>{
+    state.J[i] = +s.value; state.auto=false; setPlay(false); applyJoints();
+  });
+});
+function syncSliders(){
+  for(let i=0;i<6;i++){ sliders[i].value = Math.round(state.J[i]); vals[i].textContent = Math.round(state.J[i])+'°'; }
+}
+
+// ---- 自动运行：抓取-放置循环 ----
+const POSES = [
+  [0,-30,60,0,30,0],     // 零位
+  [45,-15,45,0,40,0],    // 接近工件A
+  [45,2,28,0,52,0],      // 抓取
+  [45,-32,68,0,18,0],    // 抬起
+  [0,-32,68,0,18,0],     // 转身
+  [-45,-32,68,0,18,0],   // 移至工件B
+  [-45,-15,45,0,40,0],   // 接近
+  [-45,2,28,0,52,0],     // 放置
+  [-45,-32,68,0,18,0],   // 抬起
+  [0,-32,68,0,18,0],     // 回身
+];
+const ease = t => t*t*(3-2*t);
+const lerp = (a,b,t)=> a+(b-a)*t;
+const POSEDUR = 1.5;
+
+function stepAuto(dt){
+  state.t += dt*state.speed/POSEDUR;
+  if(state.t>=1){
+    state.t=0; state.seg=(state.seg+1)%POSES.length;
+    if(state.seg===0) state.cycle++;
+    // 抓取/放置时让夹爪开合 + 工件随动
+  }
+  const a=POSES[state.seg], b=POSES[(state.seg+1)%POSES.length];
+  for(let i=0;i<6;i++) state.J[i]=lerp(a[i],b[i],ease(state.t));
+  applyJoints(); syncSliders();
+  // 夹爪开合：在接近/抓取/放置段闭合
+  const seg=state.seg, tt=state.t;
+  let close=1; // 1=张开 0=闭合
+  if((seg===1&&tt>0.6)||seg===2||(seg===3)||(seg===4&&tt<0.4)) close=0;
+  if((seg===5&&tt>0.6)||seg===6||seg===7||(seg===8&&tt<0.4)) close=0;
+  const gap = lerp(0.09,-0.02,1-close);
+  fL.position.y = gap; fR.position.y = -gap;
+  // 工件A随夹爪（seg 2~4 抬起后到转身）
+  if(seg>=2 && seg<=4){ const p=new THREE.Vector3(); tcp.getWorldPosition(p); part.position.copy(p); part.position.y-=0.0; }
+  if(seg>=6 && seg<=8){ const p=new THREE.Vector3(); tcp.getWorldPosition(p); part2.position.copy(p); }
+}
+
+// ---- 信息卡（hover）----
+const ray = new THREE.Raycaster();
+const mouse = new THREE.Vector2(-9,-9);
+const card = document.getElementById('card');
+const cardNm=card.querySelector('.nm'), cardEn=card.querySelector('.en'),
+      cardMat=card.querySelector('.mat'), cardFn=card.querySelector('.fn'),
+      cardPrm=card.querySelector('.prm'), cardSt=card.querySelector('.st');
+addEventListener('mousemove', e=>{
+  mouse.x=(e.clientX/innerWidth)*2-1; mouse.y=-(e.clientY/innerHeight)*2+1;
+});
+function updateCard(){
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObjects(allMeshes, false)[0];
+  if(!hit){ card.style.display='none'; return; }
+  const info = hit.object.userData.info; if(!info){ card.style.display='none'; return; }
+  cardNm.textContent=info.nm; cardEn.textContent=info.en;
+  cardMat.textContent=info.mat; cardFn.textContent=info.fn; cardPrm.textContent=info.prm;
+  let st='';
+  const idx = [j1,j2,j3,j4,j5,j6].indexOf(hit.object.parent);
+  if(idx>=0) st = `当前关节角  ${state.J[idx].toFixed(1)}°`;
+  else if(hit.object.parent===grip) st = `夹爪状态  ${fL.position.y>0?'张开':'闭合'}`;
+  else if(hit.object===part||hit.object===part2) st = `工件  随末端移动中`;
+  else st = `坐标  X${tcp.getWorldPosition(new THREE.Vector3()).x.toFixed(2)} Y${tcp.getWorldPosition(new THREE.Vector3()).y.toFixed(2)} Z${tcp.getWorldPosition(new THREE.Vector3()).z.toFixed(2)}`;
+  cardSt.textContent = st;
+  card.style.display='block';
+  card.style.left = (mouse.x>=0? (mouse.x*innerWidth/2+innerWidth/2)+14 : (mouse.x*innerWidth/2+innerWidth/2)-314);
+  card.style.top  = Math.min(mouse.y*innerHeight/2+innerHeight/2, innerHeight-220)+'px';
+}
+
+// ---- 控制条 ----
+const playBtn=document.getElementById('play');
+function setPlay(on){ state.auto=on; playBtn.classList.toggle('on',on); playBtn.textContent= on?'⏸ 暂停':'▶ 自动运行';
+  document.getElementById('mode').textContent= on?'自动运行':'手动示教';
+  document.getElementById('mode').className='mode-chip '+(on?'auto':'manual'); }
+playBtn.onclick=()=>{ if(state.auto){ setPlay(false); } else { state.auto=true; setPlay(true); } };
+document.getElementById('home').onclick=()=>{ state.auto=false; setPlay(false); state.J=ZERO.slice(); applyJoints(); syncSliders(); };
+
+const VIEWS={
+  free:{p:[6,5,7],t:[0,1.7,0]},
+  side:{p:[0.5,2.2,9],t:[0,1.7,0]},
+  top :{p:[0.01,11,0.01],t:[0,0,0]},
+  front:{p:[0,2.2,9],t:[0,1.7,0]},
+};
+document.querySelectorAll('.view').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    const v=VIEWS[b.dataset.v];
+    camera.position.set(...v.p); controls.target.set(...v.t); controls.update();
+  };
+});
+document.querySelector('.view[data-v="free"]').classList.add('on');
+
+// 引导
+document.getElementById('gok').onclick=()=> document.getElementById('guide').style.display='none';
+
+// ---- 主循环 ----
+const clock=new THREE.Clock();
+const tcpPrev=new THREE.Vector3(); tcp.getWorldPosition(tcpPrev);
+let fpsT=0, fpsN=0; const fpsEl=document.getElementById('fps');
+applyJoints(); syncSliders();
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05);
+  if(state.auto) stepAuto(dt);
+  controls.update();
+
+  // 状态面板
+  const p=new THREE.Vector3(); tcp.getWorldPosition(p);
+  const sp = p.distanceTo(tcpPrev)/Math.max(dt,1e-4);
+  tcpPrev.copy(p);
+  document.getElementById('cyc').textContent=state.cycle;
+  document.getElementById('tcpv').textContent=sp.toFixed(2)+' m/s';
+  document.getElementById('tx').textContent=p.x.toFixed(2);
+  document.getElementById('ty').textContent=p.y.toFixed(2);
+  document.getElementById('tz').textContent=p.z.toFixed(2);
+
+  updateCard();
+  renderer.render(scene,camera);
+
+  fpsN++; fpsT+=dt; if(fpsT>=0.5){ fpsEl.textContent=Math.round(fpsN/fpsT)+' fps'; fpsN=0; fpsT=0; }
+}
+animate();
+
+addEventListener('resize', ()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+} catch(err){
+  console.error(err);
+  const e=document.getElementById('err');
+  e.style.display='flex';
+  e.textContent='初始化失败：'+(err && err.message ? err.message : err)+'\n请通过本地 HTTP 服务器打开（见 README），file:// 直开会被浏览器拦截 ES Module。';
+}
+</script>
+</body>
+</html>

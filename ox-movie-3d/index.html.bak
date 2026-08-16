@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>牛来 · THE BULL ARRIVES</title>
+<style>
+  :root{ --line:#2b3648; --txt:#f3e9d8; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;
+    font-family:"PingFang SC","Microsoft YaHei","Segoe UI",serif;color:var(--txt)}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+
+  /* 电影遮幅 + 暗角 */
+  #bars{position:fixed;inset:0;pointer-events:none;z-index:10}
+  #bars::before,#bars::after{content:"";position:absolute;left:0;right:0;height:9vh;background:#000}
+  #bars::before{top:0} #bars::after{bottom:0}
+  #vig{position:fixed;inset:0;pointer-events:none;z-index:11;
+    background:radial-gradient(ellipse at center, transparent 52%, rgba(0,0,0,.62) 100%)}
+
+  /* 字幕 / 片头片尾 */
+  #title{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;z-index:20;pointer-events:none;text-align:center;
+    transition:opacity .8s; opacity:0}
+  #title .cn{font-size:13vw;font-weight:800;letter-spacing:.12em;color:#f6ead2;
+    text-shadow:0 0 28px rgba(255,170,80,.45)}
+  #title .en{font-size:1.5vw;letter-spacing:.55em;color:#d8a25a;margin-top:.4em;text-transform:uppercase}
+  #end{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;z-index:20;pointer-events:none;text-align:center;
+    opacity:0;transition:opacity 1s}
+  #end .fin{font-size:4vw;letter-spacing:.4em;color:#f6ead2}
+  #end .cr{font-size:1vw;letter-spacing:.3em;color:#b98a4e;margin-top:1.2em;line-height:2}
+
+  /* 控制条 */
+  #ctrl{position:fixed;bottom:10vh;left:50%;transform:translateX(-50%);z-index:30;
+    display:flex;align-items:center;gap:10px;background:rgba(10,8,6,.6);
+    border:1px solid var(--line);border-radius:30px;padding:7px 14px;backdrop-filter:blur(8px)}
+  #ctrl button{background:#3a2a16;color:#f3e9d8;border:1px solid #6b4a22;border-radius:20px;
+    padding:6px 14px;font-size:12.5px;cursor:pointer}
+  #ctrl button:hover{background:#5a3f1f}
+  #timeline{width:min(46vw,520px);height:4px;background:#2a2118;border-radius:3px;overflow:hidden}
+  #prog{height:100%;width:0;background:linear-gradient(90deg,#d8a25a,#ffce8a)}
+  #tlabel{font-family:ui-monospace,monospace;font-size:11px;color:#c9a877;min-width:74px;text-align:center}
+
+  #hint{position:fixed;top:11vh;left:50%;transform:translateX(-50%);z-index:30;
+    font-size:12px;color:#caa06a;letter-spacing:.1em;opacity:.8;pointer-events:none}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"./vendor/three.module.js",
+  "three/addons/":"./vendor/addons/"
+}}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="bars"></div>
+<div id="vig"></div>
+
+<div id="title"><div class="cn">牛 来</div><div class="en">The Bull Arrives</div></div>
+<div id="end">
+  <div class="fin">— 完 —</div>
+  <div class="cr">导演 · 程序化几何<br>主演 · 一头走来的牛<br>THREE.JS CINEMATIC · 单文件短片</div>
+</div>
+
+<div id="hint">播放中 · 暂停后可拖拽自由看 · 点「重播」从头开始</div>
+
+<div id="ctrl">
+  <button id="play">⏸ 暂停</button>
+  <div id="timeline"><div id="prog"></div></div>
+  <div id="tlabel">0.0 / 22s</div>
+  <button id="restart">↺ 重播</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+try {
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const SKY = new THREE.Color(0x2a1b10);
+scene.background = SKY;
+scene.fog = new THREE.Fog(0x2a1b10, 18, 60);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, .05, 300);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = .06;
+controls.enabled = false; // 播放时由时间线接管
+
+// 环境 + 暖色夕阳光
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), .03).texture;
+scene.add(new THREE.HemisphereLight(0xffd9a0, 0x2a1a10, .55));
+const sun = new THREE.DirectionalLight(0xff9248, 3.0);
+sun.position.set(-14, 7, -10); sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=1; sun.shadow.camera.far=60;
+sun.shadow.camera.left=-20; sun.shadow.camera.right=20;
+sun.shadow.camera.top=20; sun.shadow.camera.bottom=-20;
+scene.add(sun);
+const rim = new THREE.DirectionalLight(0x88aaff, .6); rim.position.set(10,5,12); scene.add(rim);
+
+// 地面
+const ground = new THREE.Mesh(new THREE.CircleGeometry(80,64),
+  new THREE.MeshStandardMaterial({color:0x3a2a18, roughness:1, metalness:0}));
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+// 几块石头点缀
+const rockMat = new THREE.MeshStandardMaterial({color:0x5a4d3a, roughness:1});
+for(let i=0;i<7;i++){
+  const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.3+Math.random()*0.5,0), rockMat);
+  const a=Math.random()*Math.PI*2, d=6+Math.random()*18;
+  r.position.set(Math.cos(a)*d, 0.1, Math.sin(a)*d); r.castShadow=true; r.receiveShadow=true; scene.add(r);
+}
+
+// ---------- 程序化牛 ----------
+const ox = new THREE.Group(); scene.add(ox);
+const M = (c,opt={})=> new THREE.MeshStandardMaterial(Object.assign({color:c, roughness:.7, metalness:.05},opt));
+const coat = M(0x4a3320), coatD=M(0x352315), horn=M(0xe9dcc0,{roughness:.5}), hoof=M(0x14100c,{roughness:.9}),
+      eye=M(0x0a0a0a,{roughness:.2}), snout=M(0x6b4a32,{roughness:.6});
+
+const body = new THREE.Mesh(new THREE.SphereGeometry(1,32,24), coat);
+body.scale.set(1.5,1.0,1.05); body.position.y=1.55; body.castShadow=true; ox.add(body);
+// 肩背隆起
+const hump = new THREE.Mesh(new THREE.SphereGeometry(0.7,24,18), coatD);
+hump.scale.set(1.1,0.8,1.0); hump.position.set(-0.2,2.15,0); hump.castShadow=true; ox.add(hump);
+
+// 头
+const head = new THREE.Group(); head.position.set(1.45,1.75,0); ox.add(head);
+const skull = new THREE.Mesh(new THREE.SphereGeometry(0.55,24,18), coat);
+skull.scale.set(1.0,0.95,0.9); skull.castShadow=true; head.add(skull);
+const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.32,0.42,0.6,20), snout);
+muzzle.rotation.z=Math.PI/2; muzzle.position.set(0.5,0.05,0); muzzle.castShadow=true; head.add(muzzle);
+[-0.12,0.12].forEach(z=>{ const n=new THREE.Mesh(new THREE.SphereGeometry(0.06,10,8),M(0x2a1a12)); n.position.set(0.8,0.05,z); head.add(n); });
+// 眼
+[-0.28,0.28].forEach(z=>{ const e=new THREE.Mesh(new THREE.SphereGeometry(0.07,12,10),eye); e.position.set(0.35,0.18,z); head.add(e); });
+// 耳
+[-0.5,0.5].forEach(z=>{ const ear=new THREE.Mesh(new THREE.SphereGeometry(0.18,12,10),coatD); ear.scale.set(0.6,1.1,0.4); ear.position.set(-0.1,0.45,z); ear.rotation.z=z>0?0.5:-0.5; head.add(ear); });
+// 角
+[-1,1].forEach(s=>{
+  const h=new THREE.Mesh(new THREE.ConeGeometry(0.11,0.75,16),horn);
+  h.position.set(-0.15,0.5,s*0.32); h.rotation.z=s*0.5; h.rotation.x=-0.3; h.castShadow=true; head.add(h);
+  const tip=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.4,14),horn);
+  tip.position.set(-0.35,0.85,s*0.5); tip.rotation.z=s*0.7; tip.rotation.x=-0.5; head.add(tip);
+});
+
+// 腿：4 条，每条 上段+下段+蹄
+const legs=[]; const legPos=[[1.0,0.55],[1.0,-0.55],[-0.95,0.55],[-0.95,-0.55]];
+legPos.forEach(([x,z])=>{
+  const g=new THREE.Group(); g.position.set(x,1.15,z); ox.add(g);
+  const up=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.14,0.7,14),coatD);
+  up.position.y=-0.35; up.castShadow=true; g.add(up);
+  const lo=new THREE.Group(); lo.position.y=-0.7; g.add(lo);
+  const low=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.11,0.6,14),coatD);
+  low.position.y=-0.3; low.castShadow=true; lo.add(low);
+  const hf=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.16,14),hoof);
+  hf.position.y=-0.62; hf.castShadow=true; lo.add(hf);
+  legs.push({g,lo});
+});
+// 尾
+const tail=new THREE.Group(); tail.position.set(-1.5,1.9,0); ox.add(tail);
+const tup=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.05,0.9,10),coatD); tup.position.y=-0.45; tail.add(tup);
+const ttuft=new THREE.Mesh(new THREE.SphereGeometry(0.13,12,10),M(0x231710)); ttuft.position.y=-0.95; tail.add(ttuft);
+
+// ---------- 时间线 ----------
+const TOTAL=22;
+const CAM=[ // {t, p:[x,y,z], l:[x,y,z]}
+  {t:0,  p:[2,3.2,17],  l:[0,1.4,-6]},
+  {t:4,  p:[-1,2.4,12], l:[-5,1.4,-2]},
+  {t:9,  p:[3,1.9,7.5], l:[1,1.5,0]},
+  {t:13, p:[7,2.6,6.5], l:[2,1.6,0]},
+  {t:17, p:[2.6,2.1,3.4],l:[2.4,1.9,0.2]},
+  {t:21, p:[2,3.2,17],  l:[0,1.4,0]},
+];
+const BULLX=[ // 牛沿 +X 走来：x 从 -16 走到 +1.5
+  {t:0,x:-16},{t:12,x:1.5},{t:21,x:1.5}
+];
+const lerp=(a,b,t)=>a+(b-a)*t;
+const ease=t=>t*t*(3-2*t);
+function sample(arr,t){
+  if(t<=arr[0].t) return arr[0].x!==undefined?arr[0].x:arr[0];
+  for(let i=0;i<arr.length-1;i++){
+    if(t>=arr[i].t && t<=arr[i+1].t){
+      const k=(t-arr[i].t)/(arr[i+1].t-arr[i].t);
+      if(arr[i].x!==undefined) return lerp(arr[i].x,arr[i+1].x,ease(k));
+      return { p:arr[i].p.map((v,j)=>lerp(v,arr[i+1].p[j],ease(k))),
+               l:arr[i].l.map((v,j)=>lerp(v,arr[i+1].l[j],ease(k))) };
+    }
+  }
+  return arr[arr.length-1].x!==undefined?arr[arr.length-1].x:arr[arr.length-1];
+}
+
+// ---------- 状态 ----------
+const ui={ playing:true, t:0, walk:0 };
+const titleEl=document.getElementById('title'), endEl=document.getElementById('end'),
+      progEl=document.getElementById('prog'), tlab=document.getElementById('tlabel'),
+      playBtn=document.getElementById('play');
+
+function setPlay(on){ ui.playing=on; controls.enabled=!on; playBtn.textContent= on?'⏸ 暂停':'▶ 播放';
+  document.getElementById('hint').style.opacity = on?0.8:0.4; }
+playBtn.onclick=()=> setPlay(!ui.playing);
+document.getElementById('restart').onclick=()=>{ ui.t=0; ui.walk=0; setPlay(true); };
+
+// ---------- 主循环 ----------
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05);
+  if(ui.playing){
+    ui.t+=dt;
+    if(ui.t>=TOTAL){ ui.t=TOTAL; setPlay(false); }
+  }
+  const t=ui.t;
+
+  // 牛的位置 + 是否走动
+  const bx=sample(BULLX,t); ox.position.x=bx;
+  const moving = t<12;
+  if(moving) ui.walk += dt*6;
+
+  // 步态
+  legs.forEach((L,i)=>{
+    const ph=ui.walk + (i<2?0:Math.PI); // 对角同步
+    const s=Math.sin(ph);
+    L.g.rotation.z = s*0.5;
+    L.lo.rotation.z = (s>0? -s:0)*0.8;
+  });
+  ox.position.y = moving? Math.abs(Math.sin(ui.walk))*0.05 : 0;
+  head.rotation.z = Math.sin(ui.walk*0.5)*0.04;
+  tail.rotation.z = Math.sin(ui.walk*0.7)*0.25 + 0.1;
+
+  // 运镜
+  if(ui.playing){
+    const c=sample(CAM,t);
+    camera.position.set(...c.p);
+    camera.lookAt(...c.l);
+  } else {
+    controls.update();
+  }
+
+  // 字幕
+  const ti = (t>0.6 && t<3.4)? Math.min(1,(t-0.6)/0.6, (3.4-t)/0.6) : (t>=3.4?0:1);
+  titleEl.style.opacity = ti>0.05?ti:0;
+  endEl.style.opacity = t>19? Math.min(1,(t-19)/1.2):0;
+
+  progEl.style.width=(t/TOTAL*100)+'%';
+  tlab.textContent = t.toFixed(1)+' / '+TOTAL+'s';
+
+  renderer.render(scene,camera);
+}
+animate();
+
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+} catch(err){
+  console.error(err);
+  document.body.insertAdjacentHTML('beforeend','<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#ff5d5d;z-index:99;text-align:center;padding:30px">初始化失败：'+(err&&err.message?err.message:err)+'<br>请用本地 HTTP 服务器打开（见 README）。</div>');
+}
+</script>
+</body>
+</html>
